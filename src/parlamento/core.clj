@@ -11,7 +11,7 @@
             [manifold.stream :as st]
             [taoensso.timbre :as log]))
 
-;; -- Driver Management
+; <editor-fold desc="Driver Management">
 
 (defonce headless? false)
 (defonce drivers (atom {:pool []
@@ -60,7 +60,9 @@
   (let [idle (:idle @drivers)]
     (st/put! idle n)))
 
-;; -- DB Management
+; </editor-fold>
+
+; <editor-fold desc="DB Management">
 
 (defonce db (do
               (pers/file-atom {:active {}
@@ -75,8 +77,9 @@
 (defn count-days-on-db
   []
   (count (:active @db)))
+; </editor-fold>
 
-;; -- Página de Pesquisa
+; <editor-fold desc="Página de pesquisa">
 
 (def situacao-q {:css "option[value=\"1000\"]"})
 (def data-q {:css "input[title=\"Data\"]"})
@@ -138,7 +141,9 @@
           (recur new-acc))
         new-acc))))
 
-;; -- Biografia
+; </editor-fold>
+
+; <editor-fold desc="Biografia">
 
 (defn column-wise->row-wise
   "Converts a map of sequences (column-wise) to a sequence of maps (row-wise)."
@@ -193,10 +198,9 @@
     (merge title-info
            {:complementar details}
            {:tabela tabela})))
+; </editor-fold>
 
-
-; -- Scrapers
-
+; <editor-fold desc="Scrapers">
 
 (defn gen-worker-factory
   [job-stream scrape-name already-scraped-pred scrape-and-save!]
@@ -269,7 +273,6 @@
               update :bio
               assoc bid (get-bio driver bid)))
 
-
 (defn scrape-bios!
   []
   (let [n    (count (:pool @drivers))
@@ -286,6 +289,7 @@
   (mapv future-cancel workers)
   (init-idle! (count (:pool @drivers))))
 
+; </editor-fold>
 
 (comment
   (init-drivers! 16)
