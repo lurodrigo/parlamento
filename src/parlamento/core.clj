@@ -3,7 +3,7 @@
             [clojure.string :as string]
             [alandipert.enduro :as pers]
             [clj-time.core :as t]
-            [clj-time.coerce :refer [to-local-date]]
+            [clj-time.coerce :refer [to-date to-date-time]]
             [clj-time.periodic :refer [periodic-seq]]
             [diehard.core :as dh]
             [etaoin.api :as e]
@@ -243,8 +243,8 @@
 
 
 (defn date-range [date1 date2]
-  (let [ldate1 (to-local-date date1)
-        ldate2 (to-local-date date2)
+  (let [ldate1 (to-date date1)
+        ldate2 (to-date date2)
         a-day  (t/days 1)]
     (->> (periodic-seq ldate1 a-day)
          (take-while #(t/before? % (t/plus ldate2 a-day)))
@@ -288,6 +288,78 @@
   [{:keys [workers]}]
   (mapv future-cancel workers)
   (init-idle! (count (:pool @drivers))))
+
+; </editor-fold>
+
+; <editor-fold desc="Export">
+
+(defn within?
+  [[date1 date2] date]
+  (t/within? (t/interval (to-date-time date1)
+                         (t/plus (to-date-time date2)
+                                 (t/days 1)))
+             (to-date-time date)))
+
+(def ^:const legislaturas
+  {"XIII" ["2015-10-23" "2019-10-24"]
+   "XII"  ["2011-06-20" "2015-10-22"]
+   "XI"   ["2009-10-15" "2011-06-19"]
+   "X"    ["2005-03-10" "2009-10-14"]
+   "IX"   ["2002-04-05" "2005-03-09"]
+   "IIX"  ["1999-10-25" "2002-04-04"]})
+
+
+(defn legislatura
+  [date]
+  (loop [legs legislaturas]
+    (when-not (empty? legs)
+      (let [[symbol interval] (first legs)]
+        (if (within? interval date)
+          symbol
+          (recur (rest legs)))))))
+
+
+(defn build-row
+  [db-content date bid]
+  (let [bio  (get-in db-content [:bio bid])
+        legs (legislatura date)]
+
+    (merge {"Data Ativo"    date
+            "Nome resumido" (get bio "Nome")
+            "Legislatura"   legs}
+
+           (select-keys (->> (:tabela bio)
+                             (filter #(= (get % "Legislatura") legs))
+                             first)
+                        ["Círculo Eleitoral" "Grupo Parlamentar/Partido"])
+
+           (->> (:complementar bio)
+                (mapv (fn [[k v]]
+                        [k (string/join "\n" v)]))
+                (into {})))))
+
+
+(defn row-wise->matrix
+  "Converts a sequence of maps (row-wise) to a matrix (vector of vectors).
+  Includes a header column."
+  ([m]
+   (row-wise->matrix m identity))
+  ([m key->col]
+   (let [ks (keys (first m))
+         colnames (mapv key->col ks)]
+     (->> (mapv (comp vec vals) m)
+          (concat [colnames])
+          (into [])))))
+
+
+(defn build-table
+  [interval]
+  (let [db-content @db]
+    (->> (:active db-content)
+         (filter (fn [[date bids]]
+                   (within? interval date)))
+         (mapcat (fn [[date bids]]
+                   (map (partial build-row db-content date) bids))))))
 
 ; </editor-fold>
 
