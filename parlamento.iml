@@ -22,6 +22,7 @@
     <orderEntry type="library" name="Leiningen: com.fasterxml.jackson.core/jackson-core:2.7.5" level="project" />
     <orderEntry type="library" name="Leiningen: com.fasterxml.jackson.dataformat/jackson-dataformat-cbor:2.7.5" level="project" />
     <orderEntry type="library" name="Leiningen: com.fasterxml.jackson.dataformat/jackson-dataformat-smile:2.7.5" level="project" />
+    <orderEntry type="library" name="Leiningen: com.github.virtuald/curvesapi:1.04" level="project" />
     <orderEntry type="library" name="Leiningen: com.taoensso/encore:2.91.0" level="project" />
     <orderEntry type="library" name="Leiningen: com.taoensso/timbre:4.10.0" level="project" />
     <orderEntry type="library" name="Leiningen: com.taoensso/truss:1.5.0" level="project" />
@@ -29,6 +30,7 @@
     <orderEntry type="library" name="Leiningen: commons-io:2.5" level="project" />
     <orderEntry type="library" name="Leiningen: commons-logging:1.2" level="project" />
     <orderEntry type="library" name="Leiningen: diehard:0.9.4" level="project" />
+    <orderEntry type="library" name="Leiningen: dk.ative/docjure:1.13.0" level="project" />
     <orderEntry type="library" name="Leiningen: etaoin:0.3.6" level="project" />
     <orderEntry type="library" name="Leiningen: io.aleph/dirigiste:0.1.5" level="project" />
     <orderEntry type="library" name="Leiningen: io.aviso/pretty:0.1.33" level="project" />
@@ -36,18 +38,25 @@
     <orderEntry type="library" name="Leiningen: manifold:0.1.8" level="project" />
     <orderEntry type="library" name="Leiningen: net.jodah/failsafe:2.3.1" level="project" />
     <orderEntry type="library" name="Leiningen: nrepl:0.6.0" level="project" />
+    <orderEntry type="library" name="Leiningen: org.apache.commons/commons-collections4:4.1" level="project" />
     <orderEntry type="library" name="Leiningen: org.apache.httpcomponents/httpclient:4.5.2" level="project" />
     <orderEntry type="library" name="Leiningen: org.apache.httpcomponents/httpcore:4.4.5" level="project" />
     <orderEntry type="library" name="Leiningen: org.apache.httpcomponents/httpmime:4.5.2" level="project" />
+    <orderEntry type="library" name="Leiningen: org.apache.poi/poi-ooxml-schemas:3.17" level="project" />
+    <orderEntry type="library" name="Leiningen: org.apache.poi/poi-ooxml:3.17" level="project" />
+    <orderEntry type="library" name="Leiningen: org.apache.poi/poi:3.17" level="project" />
+    <orderEntry type="library" name="Leiningen: org.apache.xmlbeans/xmlbeans:2.6.0" level="project" />
     <orderEntry type="library" name="Leiningen: org.clojure/clojure:1.10.1" level="project" />
     <orderEntry type="library" name="Leiningen: org.clojure/core.specs.alpha:0.2.44" level="project" />
     <orderEntry type="library" name="Leiningen: org.clojure/data.codec:0.1.0" level="project" />
+    <orderEntry type="library" name="Leiningen: org.clojure/data.csv:1.0.0" level="project" />
     <orderEntry type="library" name="Leiningen: org.clojure/spec.alpha:0.2.176" level="project" />
     <orderEntry type="library" name="Leiningen: org.clojure/tools.logging:0.3.1" level="project" />
     <orderEntry type="library" name="Leiningen: org.clojure/tools.reader:0.10.0" level="project" />
     <orderEntry type="library" name="Leiningen: potemkin:0.4.3" level="project" />
     <orderEntry type="library" name="Leiningen: riddley:0.1.14" level="project" />
     <orderEntry type="library" name="Leiningen: slingshot:0.12.2" level="project" />
+    <orderEntry type="library" name="Leiningen: stax/stax-api:1.0.1" level="project" />
     <orderEntry type="library" name="Leiningen: tigris:0.1.1" level="project" />
   </component>
 </module>

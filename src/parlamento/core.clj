@@ -1,11 +1,14 @@
 (ns parlamento.core
-  (:require [clojure.set :as set]
+  (:require [clojure.data.csv :as csv]
+            [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as string]
             [alandipert.enduro :as pers]
             [clj-time.core :as t]
-            [clj-time.coerce :refer [to-date to-date-time]]
+            [clj-time.coerce :refer [to-date to-local-date to-date-time]]
             [clj-time.periodic :refer [periodic-seq]]
             [diehard.core :as dh]
+            [dk.ative.docjure.spreadsheet :as x]
             [etaoin.api :as e]
             [manifold.deferred :as d]
             [manifold.stream :as st]
@@ -243,8 +246,8 @@
 
 
 (defn date-range [date1 date2]
-  (let [ldate1 (to-date date1)
-        ldate2 (to-date date2)
+  (let [ldate1 (to-local-date date1)
+        ldate2 (to-local-date date2)
         a-day  (t/days 1)]
     (->> (periodic-seq ldate1 a-day)
          (take-while #(t/before? % (t/plus ldate2 a-day)))
@@ -306,7 +309,7 @@
    "XI"   ["2009-10-15" "2011-06-19"]
    "X"    ["2005-03-10" "2009-10-14"]
    "IX"   ["2002-04-05" "2005-03-09"]
-   "IIX"  ["1999-10-25" "2002-04-04"]})
+   "VIII"  ["1999-10-25" "2002-04-04"]})
 
 
 (defn legislatura
@@ -319,7 +322,40 @@
           (recur (rest legs)))))))
 
 
-(defn build-row
+(def ^:const col-order-active
+  {
+   ;"Condecorações e Louvores" 8
+   ;"Títulos académicos e científicos" 9
+   "Círculo Eleitoral"         14                           ;
+   ;"Falecido/a" 11
+   ;"Obras Publicadas" 10
+   "Grupo Parlamentar/Partido" 15                           ;
+   "Legislatura"               13                           ;
+   "Data Ativo"                12                           ;
+   ;"Data de nascimento" 2
+   "Nome resumido"             0                            ;
+   ;"Nome completo" 1
+   ;"Habilitações literárias" 4
+   ;"Profissão" 3
+   ;"Cargos exercidos" 6
+   ;"Cargos que desempenha" 5
+   ;"Comissões Parlamentares a que pertence" 7
+   })
+
+
+(defn party-at-date
+  [date entry]
+  (let [lines (string/split-lines entry)]
+    (if (= 1 (count lines))
+      entry
+      (let [date-split (re-find #"\d{4}-\d{2}-\d{2}" (lines 1))]
+        (case (compare date date-split)
+          -1
+          (lines 2)
+
+          (lines 0))))))
+
+(defn build-entry-active
   [db-content date bid]
   (let [bio  (get-in db-content [:bio bid])
         legs (legislatura date)]
@@ -328,38 +364,97 @@
             "Nome resumido" (get bio "Nome")
             "Legislatura"   legs}
 
-           (select-keys (->> (:tabela bio)
-                             (filter #(= (get % "Legislatura") legs))
-                             first)
-                        ["Círculo Eleitoral" "Grupo Parlamentar/Partido"])
+           (-> (select-keys (->> (:tabela bio)
+                                 (filter #(= (get % "Legislatura") legs))
+                                 first)
+                            ["Círculo Eleitoral" "Grupo Parlamentar/Partido"])
+               (update "Grupo Parlamentar/Partido"
+                       (partial party-at-date date))))))
 
+
+(defn build-entry-bio
+  [db-content bid]
+  (let [bio (get-in db-content [:bio bid])]
+    (merge {"Nome resumido" (get bio "Nome")}
            (->> (:complementar bio)
                 (mapv (fn [[k v]]
                         [k (string/join "\n" v)]))
                 (into {})))))
 
 
-(defn row-wise->matrix
-  "Converts a sequence of maps (row-wise) to a matrix (vector of vectors).
-  Includes a header column."
-  ([m]
-   (row-wise->matrix m identity))
-  ([m key->col]
-   (let [ks (keys (first m))
-         colnames (mapv key->col ks)]
-     (->> (mapv (comp vec vals) m)
-          (concat [colnames])
-          (into [])))))
+(def ^:const col-order-bio
+  {
+   "Condecorações e Louvores"               8
+   "Títulos académicos e científicos"       9
+   ;"Círculo Eleitoral"                      14
+   "Falecido/a"                             11
+   "Obras Publicadas"                       10
+   ;"Grupo Parlamentar/Partido"              15
+   ;"Legislatura"                            13
+   ;"Data Ativo"                             12
+   "Data de nascimento"                     2
+   "Nome resumido"                          0
+   "Nome completo"                          1
+   "Habilitações literárias"                4
+   "Profissão"                              3
+   "Cargos exercidos"                       6
+   "Cargos que desempenha"                  5
+   "Comissões Parlamentares a que pertence" 7
+   })
 
 
-(defn build-table
+(defn ->col-order-vec
+  [col-order-map]
+  (->> (set/map-invert col-order-map)
+       (into (sorted-map))
+       vals
+       vec))
+
+
+(defn row-builder
+  [col-order-vec]
+  (let [cols-in-order (mapv (fn [col] #(get % col "")) col-order-vec)]
+    (apply juxt cols-in-order)))
+
+
+(defn build-active-table
   [interval]
-  (let [db-content @db]
+  (let [db-content @db
+        col-order-vec (->col-order-vec col-order-active)]
     (->> (:active db-content)
-         (filter (fn [[date bids]]
+         (filter (fn [[date _]]
                    (within? interval date)))
          (mapcat (fn [[date bids]]
-                   (map (partial build-row db-content date) bids))))))
+                   (map (partial build-entry-active db-content date) bids)))
+         (map (row-builder col-order-vec))
+         (into [col-order-vec]))))
+
+
+(defn export-active!
+  ([]
+   (export-active! "target/%s Legislatura.csv"))
+  ([filename-format]
+   (for [[leg interval] legislaturas]
+     (->> (build-active-table interval)
+          (csv/write-csv (io/writer (format filename-format leg)))))))
+
+
+(defn build-bio-table
+  []
+  (let [db-content @db
+        col-order-vec (->col-order-vec col-order-bio)]
+    (->> (keys (:bio db-content))
+         (map (partial build-entry-bio db-content))
+         (map (row-builder col-order-vec))
+         (into [col-order-vec]))))
+
+
+(defn export-bio!
+  ([]
+   (export-bio! "target/Biografias.csv"))
+  ([filename]
+   (->> (build-bio-table)
+        (csv/write-csv (io/writer filename)))))
 
 ; </editor-fold>
 
