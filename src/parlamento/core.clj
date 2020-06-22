@@ -1,5 +1,6 @@
 (ns parlamento.core
-  (:require [clojure.set :as set]
+  (:require [clojure.algo.generic.functor :refer [fmap]]
+            [clojure.set :as set]
             [clojure.string :as string]
             [alandipert.enduro :as pers]
             [clj-time.core :as t]
@@ -311,6 +312,66 @@
 
 ; </editor-fold>
 
+; <editor-fold desc="Atividades">
+
+(def ^:const atividade-url "https://www.parlamento.pt/DeputadoGP/Paginas/ActividadeDeputado.aspx?BID=3&lg=XI")
+
+(defn conteudo-atividade
+  [driver nome in-id fields {:keys [link?] :or {link? false}}]
+  {nome
+   (try
+     (let [ks (mapv (partial e/get-element-text-el driver)
+                    (e/query-all driver (in-id-ending-with in-id ".TextoRegular-Titulo")))
+           vs (mapv (partial e/get-element-text-el driver)
+                    (e/query-all driver (in-id-ending-with in-id ".TextoRegular")))
+           m  (->> (interleave ks vs)
+                   (partition (* 2 fields))
+                   (mapv (partial apply array-map)))]
+       (if link?
+         (let [links (mapv #(e/get-element-attr-el driver % "href")
+                           (e/query-all driver (in-id-ending-with "pnlIniciativas" "a.TextoRegular")))]
+           (mapv #(assoc %2 "Link" %1) links m))
+         m))
+
+     (catch Exception _ []))})
+
+
+(defn get-atividades
+  [driver url]
+  (e/go driver url)
+
+  (loop []
+    (e/wait-visible driver {:css ".Titulo-Cinzento"})
+    (let [link-mais (->> (e/query-all driver {:css ".pull-right a"})
+                         (filter #(= "[mais...]" (e/get-element-text-el driver %)))
+                         first)]
+      (when link-mais
+        ; (log/debug "Clickando em " (e/get-element-attr-el driver link-mais "id"))
+        (e/click-el driver link-mais)
+        (recur))))
+
+  (->> [["Iniciativas Apresentadas" "pnlIniciativas" 4 {:link? true}]
+        ["Requerimentos Apresentados" "pnlRequerimentos" 3 {:link? true}]
+        ["Perguntas Apresentadas" "pnlPerguntas" 3 {:link? true}]
+        ["Nomeações como Autor de Parecer - Iniciativas" "pnlRelatorIniciativas" 5 {:link? true}]
+        ["Nomeações como Relator - Petições" "pnlRelatorPeticoes" 3 {:link? true}]
+        ["Comissões a que pertence / pertenceu" "pnlComissoes" 1 {:link? false}]
+        ["Subcomissões e Grupos de Trabalho a que pertence / pertenceu" "pnlSubComissoes" 1 {:link? false}]
+        ["Intervenções" "pnlIntervencoes" 5 {:link? true}]
+        ["Atividades parlamentares" "pnlActividadesParlamentares" 7 {:link? true}]
+        ["Delegações Eventuais - Reuniões em que participou" "pnlDelegacoesEventuais" 6 {:link? true}]
+        ["Audições" "pnlAudicoes" 5 {:link? true}]
+        ["Audiências" "pnlAudiencias" 5 {:link? true}]
+        ["Eventos" "pnlEventos" 5 {:link? true}]
+        ["Grupos Parlamentares de Amizade a que pertence / pertenceu" "pnlGruposParlamentaresAmizade" 1 {:link? false}]
+        ["Parlamento dos Jovens" "pnlParlamentoJovens" 5 {:link? false}]
+        ["Nomeações como Relator - Iniciativas Europeias" "pnlRelatorIniEuropeias" 3 {:link? false}]
+        ["Deslocações" "pnlDeslocacoes" 4 {:link? true}]]
+       (mapv (partial apply conteudo-atividade driver))
+       (apply merge)))
+
+; </editor-fold>
+
 ; <editor-fold desc="Biografia">
 
 (defn column-wise->row-wise
@@ -486,11 +547,25 @@
   (contains? (get-in @db [:int leg]) bid))
 
 
+(defn atividade-scraped?
+  [[leg bid]]
+  (contains? (get-in @db [:atividade leg]) bid))
+
+
 (defn save-active!
   [driver date]
   (pers/swap! db
               update :active
               assoc date (get-deputies-situation-at-date driver ativo-q date)))
+
+
+(defn save-atividade!
+  [driver [leg bid]]
+  (pers/swap! db
+              update :atividade
+              update leg
+              assoc bid (get-atividades driver
+                                        (format "https://www.parlamento.pt/DeputadoGP/Paginas/ActividadeDeputado.aspx?BID=%d&lg=%s" bid leg))))
 
 
 (defn get-interesse-url
@@ -576,10 +651,20 @@
      :workers (mapv (gen-worker-factory dates "Efetivo Definitivo" date-efetivo-definitivo-scraped? save-efetivo-definitivo!) (range n))}))
 
 
+(defn com-atividade [leg]
+  (let [interval   (legislaturas leg)]
+    (->> (:active @db)
+         (filter (fn [[date _]]
+                   (within? interval date)))
+         (vals)
+         (mapv set)
+         (apply set/union))))
+
+
 (defn com-interesse [leg]
   (let [interval   (legislaturas leg)
         db-content @db]
-    (->> (:active @db)
+    (->> (:active db-content)
          (filter (fn [[date _]]
                    (within? interval date)))
          (vals)
@@ -618,6 +703,22 @@
 
     {:missing jobs
      :workers (mapv (gen-worker-factory jobs "Interesse v1" interesse-scraped? save-interesse-v2!) (range n))}))
+
+
+(defn scrape-atividade!
+  []
+  (let [n          (count (:pool @drivers))
+        jobs       (st/stream)]
+
+    (st/put-all! jobs (->> (for [leg (keys legislaturas)]
+                             (mapv (partial vector leg)
+                                   (com-atividade leg)))
+                           (apply concat)
+                           vec))
+
+    {:missing jobs
+     :workers (mapv (gen-worker-factory jobs "Atividade" atividade-scraped? save-atividade!) (range n))}))
+
 
 
 (defn bio-scraped?
@@ -898,17 +999,17 @@
    "I - Identificação do declarante - Nome completo do cônjuge" 4})
 
 (def col-order-interesse-main-v2
-  {"BID" 0,
-   "V - Apoios ou benefícios" 9,
-   "I - Identificação do declarante - Atividade principal" 2,
-   "II - Cargo que exerce - Ano de" 7,
-   "II - Cargo que exerce - Cargo" 6,
-   "VIII - Outras situações" 11,
-   "I - Identificação do declarante - Nome completo" 1,
-   "I - Identificação do declarante - Estado civil" 3,
-   "VI - Serviços prestados" 10,
+  {"BID"                                                        0,
+   "V - Apoios ou benefícios"                                   9,
+   "I - Identificação do declarante - Atividade principal"      2,
+   "II - Cargo que exerce - Ano de"                             7,
+   "II - Cargo que exerce - Cargo"                              6,
+   "VIII - Outras situações"                                    11,
+   "I - Identificação do declarante - Nome completo"            1,
+   "I - Identificação do declarante - Estado civil"             3,
+   "VI - Serviços prestados"                                    10,
    "I - Identificação do declarante - Nome completo do cônjuge" 4,
-   "I - Identificação do declarante - Regime de bens" 5})
+   "I - Identificação do declarante - Regime de bens"           5})
 
 
 (def col-order-sociais-v1
@@ -1042,26 +1143,81 @@
 
 ; </editor-fold>
 
+; <editor-fold desc="Atividades">
+
+; melhor ["XII" 5952]
+
+(defn build-entries-atividade
+  [db-content leg col bid]
+  (let [entry    (get-in db-content [:atividade leg bid])
+        pre-rows (get entry col)
+        nome     (get-in db-content [:bio bid "Nome"])]
+    (when pre-rows
+      (->> pre-rows
+           (mapv (partial merge {"BID" (str bid) "Nome" nome}))))))
+
+
+(defn build-atividade-table
+  [leg col col-order]
+  (let [db-content    @db
+        col-order-vec (->col-order-vec col-order)]
+    (->> (com-atividade leg)
+         (mapcat (partial build-entries-atividade db-content leg col))
+         (map (row-builder col-order-vec))
+         (into [col-order-vec]))))
+
+
+(defn export-atividades!
+  ([]
+   (export-atividades! "target/Atividades %s.xlsx"))
+  ([filename]
+   (let [secao-ordem (->> (get-in @db [:atividade "XIII"])
+                          (filter (fn [[_ m]]
+                                    (every? (comp pos? count) (vals m))))
+                          (into {})
+                          (first)
+                          (second)
+                          (fmap (fn [cols]
+                                  (zipmap
+                                    (->> cols first keys (concat ["BID" "Nome"]))
+                                    (range)))))]
+
+     (for [leg (keys legislaturas)]
+       (x/save-workbook-into-file! (format filename leg)
+                                   (let [tbs (->> secao-ordem
+                                                  (map (fn [[secao col-order]]
+                                                         [(string/replace secao #"/" "ou")
+                                                          (build-atividade-table leg secao col-order)]))
+                                                  (apply concat))]
+                                     (apply x/create-workbook tbs)))))))
+
+
+; </editor-fold>
+
 ; </editor-fold>
 
 ; <editor-fold desc="REPL">
 
 (comment
 
-  (init-drivers! 16)
+  (def headless? true)
+
+  (init-drivers! 8)
   (pmap click-cookies! (:pool @drivers))
-
-  (def scraper (scrape-active! "2000-01-02" "2000-01-02"))
-  (def scraper (scrape-efetivo-definitivo! "1999-10-25" "2019-10-24"))
-  (def scraper (scrape-efetivo-temporario! "1999-10-25" "2019-10-24"))
-
-  (def scraper (scrape-bios!))
-
-  (cancel-scrape! scraper)
 
   (init-drivers! 1)
   (pmap click-cookies! (:pool @drivers))
   (def driver (first (:pool @drivers)))
+
+  (def scraper (scrape-active! "1999-10-25" "2019-10-24"))
+  (def scraper (scrape-efetivo-definitivo! "1999-10-25" "2019-10-24"))
+  (def scraper (scrape-efetivo-temporario! "1999-10-25" "2019-10-24"))
+  (def scraper (scrape-bios!))
+  (def scraper (scrape-interesse-v1!))
+  (def scraper (scrape-interesse-v2!))
+  (def scraper (scrape-atividade!))
+
+  (cancel-scrape! scraper)
 
   )
 
