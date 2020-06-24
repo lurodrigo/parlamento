@@ -9,6 +9,8 @@
             [diehard.core :as dh]
             [dk.ative.docjure.spreadsheet :as x]
             [etaoin.api :as e]
+            [hickory.core :as h]
+            [hickory.select :as s]
             [manifold.deferred :as d]
             [manifold.stream :as st]
             [taoensso.timbre :as log]))
@@ -71,7 +73,9 @@
                                :efetivo-temporario {}
                                :efetivo-definitivo {}
                                :bio                {}
-                               :int                {"XI" {}, "XII" {}, "XIII" {}}} "db.atom")))
+                               :int                {"XI" {}, "XII" {}, "XIII" {}}
+                               :atividade          {"XI" {}, "XII" {}, "XIII" {}
+                                                    "X"  {} "IX" {} "VIII" {}}} "db.atom")))
 
 (defn bids-on-db
   []
@@ -314,27 +318,53 @@
 
 ; <editor-fold desc="Atividades">
 
-(def ^:const atividade-url "https://www.parlamento.pt/DeputadoGP/Paginas/ActividadeDeputado.aspx?BID=3&lg=XI")
+(def ^:const atividade-url "https://www.parlamento.pt/DeputadoGP/Paginas/ActividadeDeputado.aspx?BID=5952&lg=XIII")
 
 (defn conteudo-atividade
-  [driver nome in-id fields {:keys [link?] :or {link? false}}]
+  [tree nome in-id fields {:keys [link?] :or {link? false}}]
   {nome
    (try
-     (let [ks (mapv (partial e/get-element-text-el driver)
-                    (e/query-all driver (in-id-ending-with in-id ".TextoRegular-Titulo")))
-           vs (mapv (partial e/get-element-text-el driver)
-                    (e/query-all driver (in-id-ending-with in-id ".TextoRegular")))
+     (let [ks (->> (s/select
+                     (s/descendant (s/attr "id" #(string/includes? % in-id))
+                                   (s/class "TextoRegular-Titulo"))
+                     tree)
+                   (mapv #(string/join (:content %))))
+           vs (if (= in-id "pnlIntervencoes")
+                (->> (s/select
+                       (s/descendant (s/attr "id" #(string/includes? % "pnlIntervencoes"))
+                                     (s/class "ar-no-padding"))
+                       tree)
+                     (mapv (fn [m]
+                             (let [m (update m :content (partial remove string?))
+                                   [e1 e2 e3] (:content m)]
+                               (string/join (concat (:content e2) (:content e3)))))))
+
+                (->> (s/select
+                       (s/descendant (s/attr "id" #(string/includes? % in-id))
+                                     (s/class "TextoRegular"))
+                       tree)
+                     (mapv #(string/join (:content %)))))
            m  (->> (interleave ks vs)
                    (partition (* 2 fields))
                    (mapv (partial apply array-map)))]
+       (println ks)
+       (println (count ks))
+       (println vs)
+       (println (count vs))
        (if link?
-         (let [links (mapv #(e/get-element-attr-el driver % "href")
-                           (e/query-all driver (in-id-ending-with "pnlIniciativas" "a.TextoRegular")))]
+         (let [links (->> (s/select
+                            (s/descendant (s/attr "id" #(string/includes? % in-id))
+                                          (s/and
+                                            (s/tag "a")
+                                            (s/class "TextoRegular")))
+                            tree)
+                          (mapv #(str "https://www.parlamento.pt" (get-in % [:attrs :href]))))]
            (mapv #(assoc %2 "Link" %1) links m))
          m))
 
      (catch Exception _ []))})
 
+; todo depois de apertar todos os mais fazer as queries em cima do html puro, evita roundtrips
 
 (defn get-atividades
   [driver url]
@@ -350,25 +380,29 @@
         (e/click-el driver link-mais)
         (recur))))
 
-  (->> [["Iniciativas Apresentadas" "pnlIniciativas" 4 {:link? true}]
-        ["Requerimentos Apresentados" "pnlRequerimentos" 3 {:link? true}]
-        ["Perguntas Apresentadas" "pnlPerguntas" 3 {:link? true}]
-        ["Nomeações como Autor de Parecer - Iniciativas" "pnlRelatorIniciativas" 5 {:link? true}]
-        ["Nomeações como Relator - Petições" "pnlRelatorPeticoes" 3 {:link? true}]
-        ["Comissões a que pertence / pertenceu" "pnlComissoes" 1 {:link? false}]
-        ["Subcomissões e Grupos de Trabalho a que pertence / pertenceu" "pnlSubComissoes" 1 {:link? false}]
-        ["Intervenções" "pnlIntervencoes" 5 {:link? true}]
-        ["Atividades parlamentares" "pnlActividadesParlamentares" 7 {:link? true}]
-        ["Delegações Eventuais - Reuniões em que participou" "pnlDelegacoesEventuais" 6 {:link? true}]
-        ["Audições" "pnlAudicoes" 5 {:link? true}]
-        ["Audiências" "pnlAudiencias" 5 {:link? true}]
-        ["Eventos" "pnlEventos" 5 {:link? true}]
-        ["Grupos Parlamentares de Amizade a que pertence / pertenceu" "pnlGruposParlamentaresAmizade" 1 {:link? false}]
-        ["Parlamento dos Jovens" "pnlParlamentoJovens" 5 {:link? false}]
-        ["Nomeações como Relator - Iniciativas Europeias" "pnlRelatorIniEuropeias" 3 {:link? false}]
-        ["Deslocações" "pnlDeslocacoes" 4 {:link? true}]]
-       (mapv (partial apply conteudo-atividade driver))
-       (apply merge)))
+  (let [tree (-> (e/get-source driver)
+                 (h/parse)
+                 (h/as-hickory))]
+
+    (->> [["Iniciativas Apresentadas" "pnlIniciativas" 4 {:link? true}]
+          ["Requerimentos Apresentados" "pnlRequerimentos" 3 {:link? true}]
+          ["Perguntas Apresentadas" "pnlPerguntas" 3 {:link? true}]
+          ["Nomeações como Autor de Parecer - Iniciativas" "pnlRelatorIniciativas" 5 {:link? true}]
+          ["Nomeações como Relator - Petições" "pnlRelatorPeticoes" 3 {:link? true}]
+          ["Comissões a que pertence / pertenceu" "pnlComissoes" 1 {:link? false}]
+          ["Subcomissões e Grupos de Trabalho a que pertence / pertenceu" "pnlSubComissoes" 1 {:link? false}]
+          ["Intervenções" "pnlIntervencoes" 5 {:link? true}]
+          ["Atividades parlamentares" "pnlActividadesParlamentares" 7 {:link? true}]
+          ["Delegações Eventuais - Reuniões em que participou" "pnlDelegacoesEventuais" 6 {:link? false}]
+          ["Audições" "pnlAudicoes" 5 {:link? true}]
+          ["Audiências" "pnlAudiencias" 5 {:link? true}]
+          ["Eventos" "pnlEventos" 5 {:link? true}]
+          ["Grupos Parlamentares de Amizade a que pertence / pertenceu" "pnlGruposParlamentaresAmizade" 1 {:link? false}]
+          ["Parlamento dos Jovens" "pnlParlamentoJovens" 5 {:link? false}]
+          ["Nomeações como Relator - Iniciativas Europeias" "pnlRelatorIniEuropeias" 3 {:link? false}]
+          ["Deslocações" "pnlDeslocacoes" 4 {:link? true}]]
+         (mapv (partial apply conteudo-atividade tree))
+         (apply merge))))
 
 ; </editor-fold>
 
@@ -652,7 +686,7 @@
 
 
 (defn com-atividade [leg]
-  (let [interval   (legislaturas leg)]
+  (let [interval (legislaturas leg)]
     (->> (:active @db)
          (filter (fn [[date _]]
                    (within? interval date)))
@@ -707,8 +741,8 @@
 
 (defn scrape-atividade!
   []
-  (let [n          (count (:pool @drivers))
-        jobs       (st/stream)]
+  (let [n    (count (:pool @drivers))
+        jobs (st/stream)]
 
     (st/put-all! jobs (->> (for [leg (keys legislaturas)]
                              (mapv (partial vector leg)
@@ -1145,7 +1179,7 @@
 
 ; <editor-fold desc="Atividades">
 
-; melhor ["XII" 5952]
+; melhor ["XIII" 5952]
 
 (defn build-entries-atividade
   [db-content leg col bid]
@@ -1158,8 +1192,8 @@
 
 
 (defn build-atividade-table
-  [leg col col-order]
-  (let [db-content    @db
+  [db-content leg col col-order]
+  (let [                                                    ;db-content    @db
         col-order-vec (->col-order-vec col-order)]
     (->> (com-atividade leg)
          (mapcat (partial build-entries-atividade db-content leg col))
@@ -1167,11 +1201,47 @@
          (into [col-order-vec]))))
 
 
+(def col-order-atividades
+  {"Parlamento dos Jovens" {"BID" 0, "Nome" 1, "Data" 2, "Tipo Reunião" 3, "Sessão" 4, "Local" 5, "Estabelecimento" 6},
+   "Requerimentos Apresentados" {"BID" 0, "Nome" 1, "Número" 2, "Data" 3, "Título" 4, "Link" 5},
+   "Audições" {"BID" 0, "Nome" 1, "Número" 2, "Data" 3, "Comissão" 4, "Assunto" 5, "Entidades" 6, "Link" 7},
+   "Deslocações" {"BID" 0, "Nome" 1, "Data" 2, "Comissão" 3, "Local" 4, "Assunto" 5, "Link" 6},
+   "Delegações Eventuais - Reuniões em que participou" {"BID" 0, "Nome" 1},
+   "Subcomissões e Grupos de Trabalho a que pertence / pertenceu" {"BID" 0, "Nome" 1, "Subcomissão" 2},
+   "Iniciativas Apresentadas" {"BID" 0, "Nome" 1, "Tipo" 2, "Número" 3, "Sessão" 4, "Título" 5, "Link" 6},
+   "Grupos Parlamentares de Amizade a que pertence / pertenceu" {"BID" 0, "Nome" 1, "Nome do Grupo" 2},
+   "Intervenções" {"BID" 0, "Nome" 1, "Data da reunião" 2, "Legislatura" 3, "Sessão" 4, "Tipo" 5, "Sumário" 6, "Link" 7},
+   "Nomeações como Autor de Parecer - Iniciativas" {"BID" 0,
+                                                    "Nome" 1,
+                                                    "Tipo" 2,
+                                                    "Número;" 3,
+                                                    "D.Relatório" 4,
+                                                    "Título" 5,
+                                                    "Fase" 6,
+                                                    "Link" 7},
+   "Audiências" {"BID" 0, "Nome" 1, "Número" 2, "Data" 3, "Comissão" 4, "Assunto" 5, "Entidades" 6, "Link" 7},
+   "Eventos" {"BID" 0, "Nome" 1, "Data" 2, "Tipo" 3, "Local" 4, "Comissão" 5, "Assunto" 6, "Link" 7},
+   "Nomeações como Relator - Petições" {"BID" 0, "Nome" 1, "Número" 2, "D.Relatório" 3, "Assunto" 4, "Link" 5},
+   "Perguntas Apresentadas" {"BID" 0, "Nome" 1, "Número" 2, "Data" 3, "Título" 4, "Link" 5},
+   "Comissões a que pertence / pertenceu" {"BID" 0, "Nome" 1, "Comissão" 2},
+   "Atividades parlamentares" {"BID" 0,
+                               "Nome" 1,
+                               "Data de entrada" 6,
+                               "Link" 9,
+                               "Legislatura" 4,
+                               "Sessão" 5,
+                               "Tipo" 2,
+                               "Título" 8,
+                               "Número" 3,
+                               "Data do debate" 7},
+   "Nomeações como Relator - Iniciativas Europeias" {"BID" 0, "Nome" 1, "Referência" 2, "D.Relatório" 3, "Título" 4}})
+
+
 (defn export-atividades!
-  ([]
-   (export-atividades! "target/Atividades %s.xlsx"))
-  ([filename]
-   (let [secao-ordem (->> (get-in @db [:atividade "XIII"])
+  ([dbp]
+   (export-atividades! dbp "target/Atividades %s.xlsx"))
+  ([dbp filename]
+   (let [secao-ordem (->> (get-in dbp [:atividade "XIII"])
                           (filter (fn [[_ m]]
                                     (every? (comp pos? count) (vals m))))
                           (into {})
@@ -1187,7 +1257,7 @@
                                    (let [tbs (->> secao-ordem
                                                   (map (fn [[secao col-order]]
                                                          [(string/replace secao #"/" "ou")
-                                                          (build-atividade-table leg secao col-order)]))
+                                                          (build-atividade-table dbp leg secao col-order)]))
                                                   (apply concat))]
                                      (apply x/create-workbook tbs)))))))
 
@@ -1200,25 +1270,27 @@
 
 (comment
 
+  ; setup produção
   (def headless? true)
-
-  (init-drivers! 8)
+  (init-drivers! 12)
   (pmap click-cookies! (:pool @drivers))
 
+  ; setup dev, um chromedriver só
   (init-drivers! 1)
   (pmap click-cookies! (:pool @drivers))
   (def driver (first (:pool @drivers)))
 
+  ; tarefas de scraping definitivo
   (def scraper (scrape-active! "1999-10-25" "2019-10-24"))
   (def scraper (scrape-efetivo-definitivo! "1999-10-25" "2019-10-24"))
   (def scraper (scrape-efetivo-temporario! "1999-10-25" "2019-10-24"))
   (def scraper (scrape-bios!))
   (def scraper (scrape-interesse-v1!))
   (def scraper (scrape-interesse-v2!))
-  (def scraper (scrape-atividade!))
+  (def scraper (scrape-atividade-v2!))
 
+  ; cancelar scraping.
   (cancel-scrape! scraper)
-
   )
 
 ; </editor-fold>
